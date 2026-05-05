@@ -237,6 +237,7 @@ function normalizePaper(input) {
       type: q.type || "short",
       prompt: q.prompt || q.question || q.stem || "",
       options: Array.isArray(q.options) ? q.options : [],
+      images: normalizeImages(q.images),
       answer: q.answer ?? q.correctAnswer ?? q.key ?? "",
       note: q.note || q.explanation || "",
     })),

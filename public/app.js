@@ -885,12 +885,33 @@ const app = createApp({
     }
 
     /* ---------- 卷子导入 ---------- */
-    async function importPaperFromFile(file) {
+    async function importPaperFromFile(input) {
       try {
+        const files = Array.isArray(input) ? input : Array.from(input?.length !== undefined ? input : [input]).filter(Boolean);
+        if (!files.length) return;
+        if (files.every((file) => file.type && file.type.startsWith("image/"))) {
+          const urls = await uploadFiles(files);
+          const firstName = files[0].name ? files[0].name.replace(/\.[^.]+$/, "") : "";
+          await api.addPaper({
+            title: firstName || `图片卷子 ${todayKey()}`,
+            source: "image",
+            tags: ["图片卷子"],
+            questions: urls.map((url, idx) => ({
+              id: String(idx + 1),
+              type: "image",
+              prompt: `图片题 ${idx + 1}`,
+              images: [url],
+              answer: "",
+            })),
+          });
+          showToast(`图片卷子已导入 · ${urls.length} 张`);
+          return;
+        }
+        const file = files[0];
         const text = await file.text();
         const json = JSON.parse(text);
         await api.addPaper(json);
-        showToast("卷子已导入");
+        showToast("JSON 卷子已导入");
       } catch (err) {
         showToast("导入失败：" + err.message);
       }
@@ -1168,6 +1189,9 @@ const app = createApp({
           <div class="exam-body">
             <div v-for="q in examModal.paper.questions" :key="q.id" class="exam-q">
               <div class="q-prompt"><b>{{ q.id }}.</b> {{ q.prompt }}</div>
+              <div v-if="q.images && q.images.length" class="q-images">
+                <img v-for="img in q.images" :key="img" :src="img" alt="" />
+              </div>
               <div v-if="q.options && q.options.length" class="q-opts">
                 <label v-for="opt in q.options" :key="opt">
                   <input type="radio" :name="'q-' + q.id" :value="opt" v-model="examModal.answers[q.id]" /> {{ opt }}
@@ -1353,8 +1377,8 @@ app.component("UserPane", {
       }
     },
     handleFileInput(evt) {
-      const f = evt.target.files && evt.target.files[0];
-      if (f) this.onImportPaper(f);
+      const files = Array.from(evt.target.files || []);
+      if (files.length) this.onImportPaper(files);
       evt.target.value = "";
     },
     handleNoteDragStart(note, evt) {
@@ -1431,8 +1455,8 @@ app.component("UserPane", {
           <div class="mod-head">
             <h3>📝 卷子</h3>
             <label v-if="isMe" class="btn small">
-              + 导入JSON
-              <input type="file" accept="application/json,.json" hidden @change="handleFileInput"/>
+              + 导入JSON/图片
+              <input type="file" accept="application/json,.json,image/*" multiple hidden @change="handleFileInput"/>
             </label>
           </div>
           <h4 class="mod-sub">📄 卷子库</h4>
@@ -1623,6 +1647,9 @@ app.component("DetailView", {
               <span class="badge" :class="q.isWrong ? 'badge-again' : 'badge-mastered'">{{ q.isWrong ? '错题' : '正确' }}</span>
             </div>
             <div class="answer-prompt">{{ q.prompt }}</div>
+            <div v-if="q.images && q.images.length" class="q-images">
+              <img v-for="img in q.images" :key="img" :src="img" alt="" />
+            </div>
             <div class="answer-compare">
               <span>你：{{ q.yourAnswer || '(未答)' }}</span>
               <span>正确：{{ q.answer }}</span>
@@ -1947,8 +1974,8 @@ app.component("EnglishHub", {
   },
   methods: {
     handleImport(evt) {
-      const f = evt.target.files && evt.target.files[0];
-      if (f) this.onImportPaper(f);
+      const files = Array.from(evt.target.files || []);
+      if (files.length) this.onImportPaper(files);
       evt.target.value = "";
     },
     toggleAttempt(id) {
@@ -2025,7 +2052,7 @@ app.component("EnglishHub", {
           <div v-if="tab === 'papers'" class="hub-papers">
             <div class="hub-toolbar">
               <input v-model="paperQuery" placeholder="🔍 搜索标题 / 标签" class="search-input"/>
-              <label class="btn small">+ 导入JSON<input type="file" accept=".json" hidden @change="handleImport"/></label>
+              <label class="btn small">+ 导入JSON/图片<input type="file" accept=".json,application/json,image/*" multiple hidden @change="handleImport"/></label>
             </div>
             <div v-if="!filteredPapers.length" class="empty">还没有卷子，点击导入 JSON</div>
             <ul class="card-list">
