@@ -1,0 +1,19 @@
+{
+  "name": "Promise · 双人学习打卡",
+  "short_name": "Promise",
+  "description": "Qsky 与 我爱刘涛 的双人学习打卡。",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f1ea",
+  "theme_color": "#a8b5a0",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

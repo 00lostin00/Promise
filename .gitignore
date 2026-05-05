@@ -1,0 +1,27 @@
+# 真实数据 / 用户密码 / 上传图片（绝对不要上传）
+data/
+old_data/
+
+# 保留示例
+!data/store.example.json
+
+# 环境变量
+.env
+.env.local
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# 隧道二进制
+bin/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

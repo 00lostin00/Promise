@@ -1,0 +1,13 @@
+{
+  "name": "promise",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Promise · 双人学习打卡 (Qsky / 我爱刘涛)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
