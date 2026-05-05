@@ -36,12 +36,12 @@ const presence = new Map(); // username -> lastSeenAt (ISO string), in-memory on
 
 function emptyStore() {
   return {
-    version: 4,
+    version: 5,
     updatedAt: new Date().toISOString(),
     users: {},
     goals: {
-      qsky: { paperTarget: 30, vocabTarget: 1000 },
-      liutao: { paperTarget: 30, vocabTarget: 1000 },
+      qsky: { paperTarget: 30, vocabTarget: 1000, customGoals: [] },
+      liutao: { paperTarget: 30, vocabTarget: 1000, customGoals: [] },
     },
     checkins: [],
     papers: [],
@@ -55,6 +55,25 @@ function emptyStore() {
     formulaNotes: [],
     flashcardReviews: [],
   };
+}
+
+function normalizeCustomGoals(goals) {
+  if (!Array.isArray(goals)) return [];
+  return goals
+    .slice(0, 12)
+    .map((goal) => {
+      const name = String(goal && goal.name || "").trim().slice(0, 24);
+      if (!name) return null;
+      return {
+        id: String(goal.id || id("goal")).slice(0, 40),
+        name,
+        icon: String(goal.icon || "🎯").trim().slice(0, 4) || "🎯",
+        done: Math.max(0, Number(goal.done) | 0),
+        target: Math.max(0, Number(goal.target) | 0),
+        unit: String(goal.unit || "").trim().slice(0, 8),
+      };
+    })
+    .filter(Boolean);
 }
 
 function ensureStore() {
@@ -727,12 +746,17 @@ async function handleApi(req, res, pathname) {
     }
 
     if (pathname === "/api/goals") {
-      if (!store.goals[username]) store.goals[username] = { paperTarget: 30, vocabTarget: 1000 };
+      if (!store.goals[username]) store.goals[username] = { paperTarget: 30, vocabTarget: 1000, customGoals: [] };
       if (typeof body.paperTarget === "number") {
         store.goals[username].paperTarget = Math.max(0, body.paperTarget | 0);
       }
       if (typeof body.vocabTarget === "number") {
         store.goals[username].vocabTarget = Math.max(0, body.vocabTarget | 0);
+      }
+      if (Array.isArray(body.customGoals)) {
+        store.goals[username].customGoals = normalizeCustomGoals(body.customGoals);
+      } else if (!Array.isArray(store.goals[username].customGoals)) {
+        store.goals[username].customGoals = [];
       }
       store.goals[username].updatedAt = new Date().toISOString();
       writeStore(store);

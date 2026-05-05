@@ -19,6 +19,14 @@ const USERS = {
 
 const ALL_USERNAMES = ["qsky", "liutao"];
 
+function defaultGoals() {
+  return { paperTarget: 30, vocabTarget: 1000, customGoals: [] };
+}
+
+function progressPercent(done, target) {
+  return target ? Math.min(100, Math.round((done / target) * 100)) : 0;
+}
+
 const SUBJECT_LABEL = {
   english: "英语",
   math: "数学",
@@ -259,7 +267,7 @@ const app = createApp({
   setup() {
     const state = reactive({
       users: {},
-      goals: { qsky: { paperTarget: 30, vocabTarget: 1000 }, liutao: { paperTarget: 30, vocabTarget: 1000 } },
+      goals: { qsky: defaultGoals(), liutao: defaultGoals() },
       checkins: [], papers: [], examAttempts: [],
       vocab: [], math: [], wrongQuestions: [],
       stickyNotes: [], dailySummaries: [],
@@ -296,10 +304,21 @@ const app = createApp({
     const chatDrawer = reactive({ open: false, draft: "", images: [], quote: null, lastReadAt: 0 });
     const flashcardSession = reactive({ open: false, queue: [], idx: 0, showBack: false });
     const statsModal = reactive({ open: false });
+    const imagePreview = reactive({ open: false, src: "" });
 
     function showToast(msg) {
       toast.value = msg;
       setTimeout(() => { if (toast.value === msg) toast.value = ""; }, 2200);
+    }
+
+    function openImagePreview(src) {
+      if (!src) return;
+      imagePreview.src = src;
+      imagePreview.open = true;
+    }
+    function closeImagePreview() {
+      imagePreview.open = false;
+      imagePreview.src = "";
     }
 
     /* ---------- 登录流程 ---------- */
@@ -680,15 +699,50 @@ const app = createApp({
 
     /* ---------- 进度条计算 ---------- */
     function progress(owner) {
-      const goals = state.goals[owner] || { paperTarget: 30, vocabTarget: 1000 };
+      const goals = state.goals[owner] || defaultGoals();
       const paperDone = state.examAttempts.filter((a) => a.owner === owner).length;
       const vocabCheckinDone = state.checkins
         .filter((c) => c.owner === owner && c.type === "vocab")
         .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
       const vocabDone = vocabCheckinDone || state.vocab.filter((v) => v.owner === owner && v.status === "mastered").length;
+      const paperTarget = Number(goals.paperTarget) || 0;
+      const vocabTarget = Number(goals.vocabTarget) || 0;
+      const paper = {
+        id: "paper",
+        icon: "📝",
+        label: "卷子",
+        done: paperDone,
+        target: paperTarget,
+        unit: "套",
+        percent: progressPercent(paperDone, paperTarget),
+      };
+      const vocab = {
+        id: "vocab",
+        icon: "📚",
+        label: "单词",
+        done: vocabDone,
+        target: vocabTarget,
+        unit: "个",
+        percent: progressPercent(vocabDone, vocabTarget),
+      };
+      const custom = (Array.isArray(goals.customGoals) ? goals.customGoals : []).map((goal, idx) => {
+        const done = Math.max(0, Number(goal.done) || 0);
+        const target = Math.max(0, Number(goal.target) || 0);
+        return {
+          id: goal.id || `custom-${idx}`,
+          icon: goal.icon || "🎯",
+          label: goal.name || "自定义",
+          done,
+          target,
+          unit: goal.unit || "",
+          percent: progressPercent(done, target),
+        };
+      });
       return {
-        paper: { done: paperDone, target: goals.paperTarget || 0, percent: goals.paperTarget ? Math.min(100, Math.round((paperDone / goals.paperTarget) * 100)) : 0 },
-        vocab: { done: vocabDone, target: goals.vocabTarget || 0, percent: goals.vocabTarget ? Math.min(100, Math.round((vocabDone / goals.vocabTarget) * 100)) : 0 },
+        paper,
+        vocab,
+        custom,
+        items: [paper, vocab, ...custom],
       };
     }
 
@@ -847,18 +901,56 @@ const app = createApp({
     }
 
     /* ---------- 进度条目标设定 ---------- */
-    const goalEditor = reactive({ open: false, paperTarget: 0, vocabTarget: 0 });
+    const goalEditor = reactive({ open: false, paperTarget: 0, vocabTarget: 0, customGoals: [] });
+    function cloneCustomGoals(goals) {
+      return (Array.isArray(goals) ? goals : []).map((goal, idx) => ({
+        id: goal.id || `goal_${Date.now()}_${idx}`,
+        icon: goal.icon || "🎯",
+        name: goal.name || "",
+        done: Number(goal.done) || 0,
+        target: Number(goal.target) || 0,
+        unit: goal.unit || "",
+      }));
+    }
     function openGoalEditor() {
-      const g = state.goals[me.value] || { paperTarget: 30, vocabTarget: 1000 };
-      goalEditor.paperTarget = g.paperTarget;
-      goalEditor.vocabTarget = g.vocabTarget;
+      const g = state.goals[me.value] || defaultGoals();
+      goalEditor.paperTarget = g.paperTarget || 0;
+      goalEditor.vocabTarget = g.vocabTarget || 0;
+      goalEditor.customGoals = cloneCustomGoals(g.customGoals);
       goalEditor.open = true;
+    }
+    function addCustomGoal() {
+      goalEditor.customGoals.push({
+        id: `goal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        icon: "🎯",
+        name: "",
+        done: 0,
+        target: 0,
+        unit: "",
+      });
+      nextTick(() => {
+        const inputs = document.querySelectorAll(".custom-goal-name");
+        inputs[inputs.length - 1]?.focus();
+      });
+    }
+    function removeCustomGoal(idx) {
+      goalEditor.customGoals.splice(idx, 1);
     }
     async function saveGoals() {
       try {
         await api.setGoals({
           paperTarget: Number(goalEditor.paperTarget) || 0,
           vocabTarget: Number(goalEditor.vocabTarget) || 0,
+          customGoals: goalEditor.customGoals
+            .map((goal) => ({
+              id: goal.id,
+              icon: (goal.icon || "🎯").trim() || "🎯",
+              name: (goal.name || "").trim(),
+              done: Number(goal.done) || 0,
+              target: Number(goal.target) || 0,
+              unit: (goal.unit || "").trim(),
+            }))
+            .filter((goal) => goal.name),
         });
         goalEditor.open = false;
         showToast("目标已更新");
@@ -984,6 +1076,7 @@ const app = createApp({
       USERS, ALL_USERNAMES, SUBJECT_LABEL, TYPE_LABEL,
       uploadFiles, presenceComputed,
       englishHub, mathHub, chatDrawer, statsModal, flashcardSession,
+      imagePreview, openImagePreview, closeImagePreview,
       globalSearch, searchResults, openGlobalSearch, closeGlobalSearch, openSearchResult,
       unreadChat, openChat, sendChat, pasteChatImages, chooseChatImage, quoteCheckin,
       startFlashcards, answerCard, todayDueWords,
@@ -1005,6 +1098,7 @@ const app = createApp({
       toggleNoteTask,
       // goals
       goalEditor, openGoalEditor, saveGoals,
+      addCustomGoal, removeCustomGoal,
       // exam
       examModal, startExam, closeExam, submitExam,
       importPaperFromFile,
@@ -1139,8 +1233,15 @@ const app = createApp({
             :render-md="renderMarkdown"
             :fmt-time="fmtTime"
             @mark-mastered="markWrongMastered"
+            @preview-image="openImagePreview"
           />
         </div>
+      </div>
+
+      <!-- 图片预览 -->
+      <div v-if="imagePreview.open" class="image-preview" @click.self="closeImagePreview">
+        <button class="image-preview-close" @click="closeImagePreview">×</button>
+        <img :src="imagePreview.src" alt="图片预览" @click="closeImagePreview" />
       </div>
 
       <!-- 编辑弹窗 -->
@@ -1167,14 +1268,32 @@ const app = createApp({
         <div class="modal-card goal-card">
           <button class="modal-close" @click="goalEditor.open = false">×</button>
           <h3>🎯 我的进度目标</h3>
-          <label class="field">
-            <span>卷子目标（套）</span>
-            <input type="number" v-model.number="goalEditor.paperTarget" min="0" />
-          </label>
-          <label class="field">
-            <span>单词目标（个 · 累计学习）</span>
-            <input type="number" v-model.number="goalEditor.vocabTarget" min="0" />
-          </label>
+          <div class="goal-section-title">自动统计</div>
+          <div class="goal-grid builtin-goals">
+            <label class="field">
+              <span>卷子目标（套）</span>
+              <input type="number" v-model.number="goalEditor.paperTarget" min="0" />
+            </label>
+            <label class="field">
+              <span>单词目标（个 · 累计学习）</span>
+              <input type="number" v-model.number="goalEditor.vocabTarget" min="0" />
+            </label>
+          </div>
+
+          <div class="goal-section-head">
+            <span class="goal-section-title">自定义目标</span>
+            <button class="btn small" @click="addCustomGoal">+ 添加</button>
+          </div>
+          <div v-if="!goalEditor.customGoals.length" class="goal-empty">可以加阅读、听力、运动、早睡之类的目标。</div>
+          <div v-for="(goal, idx) in goalEditor.customGoals" :key="goal.id" class="custom-goal-row">
+            <input class="goal-icon-input" v-model="goal.icon" maxlength="4" aria-label="图标" />
+            <input class="custom-goal-name" v-model="goal.name" maxlength="24" placeholder="目标名" />
+            <input type="number" v-model.number="goal.done" min="0" placeholder="已完成" />
+            <span class="goal-slash">/</span>
+            <input type="number" v-model.number="goal.target" min="0" placeholder="目标" />
+            <input class="goal-unit-input" v-model="goal.unit" maxlength="8" placeholder="单位" />
+            <button class="icon-btn" @click="removeCustomGoal(idx)" title="删除">×</button>
+          </div>
           <div class="modal-actions">
             <button class="btn" @click="goalEditor.open = false">取消</button>
             <button class="btn primary" @click="saveGoals">保存</button>
@@ -1431,15 +1550,10 @@ app.component("UserPane", {
           </div>
         </div>
         <div class="pane-progress">
-          <div class="pp-row">
-            <span class="pp-label">📝 卷子</span>
-            <div class="pp-bar"><div class="pp-fill" :style="{ width: progress.paper.percent + '%', background: user.color }"></div></div>
-            <span class="pp-num">{{ progress.paper.done }}/{{ progress.paper.target }}</span>
-          </div>
-          <div class="pp-row">
-            <span class="pp-label">📚 单词</span>
-            <div class="pp-bar"><div class="pp-fill" :style="{ width: progress.vocab.percent + '%', background: user.color }"></div></div>
-            <span class="pp-num">{{ progress.vocab.done }}/{{ progress.vocab.target }}</span>
+          <div v-for="item in progress.items" :key="item.id" class="pp-row">
+            <span class="pp-label" :title="item.label"><span class="pp-icon">{{ item.icon }}</span>{{ item.label }}</span>
+            <div class="pp-bar"><div class="pp-fill" :style="{ width: item.percent + '%', background: user.color }"></div></div>
+            <span class="pp-num">{{ item.done }}/{{ item.target }}<small v-if="item.unit">{{ item.unit }}</small></span>
           </div>
         </div>
       </div>
@@ -1641,7 +1755,7 @@ app.component("DetailView", {
         </div>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'attempt'">
@@ -1669,7 +1783,7 @@ app.component("DetailView", {
             </div>
             <div class="answer-prompt">{{ q.prompt }}</div>
             <div v-if="q.images && q.images.length" class="q-images">
-              <img v-for="img in q.images" :key="img" :src="img" alt="" />
+              <img v-for="img in q.images" :key="img" :src="img" alt="" @click="$emit('preview-image', img)" />
             </div>
             <div class="answer-compare">
               <span>你：{{ q.yourAnswer || '(未答)' }}</span>
@@ -1682,7 +1796,7 @@ app.component("DetailView", {
         <h4>结束总结</h4>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'vocab'">
@@ -1691,7 +1805,7 @@ app.component("DetailView", {
         <p>{{ entry.meaning }}</p>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'wrong'">
@@ -1706,7 +1820,7 @@ app.component("DetailView", {
         <div v-if="entry.note" class="block"><b>笔记</b><div class="md-body" v-html="renderMd(entry.note)"></div></div>
         <button v-if="!entry.mastered" class="btn primary" @click="$emit('mark-mastered', entry.id)">标记已掌握</button>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'math'">
@@ -1717,7 +1831,7 @@ app.component("DetailView", {
         </div>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'note'">
@@ -1725,7 +1839,7 @@ app.component("DetailView", {
         <div class="detail-meta"><span>{{ entry.date }}</span><span v-if="entry.archived">已归档</span></div>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
       <div v-else-if="type === 'summary'">
@@ -1735,7 +1849,7 @@ app.component("DetailView", {
         </div>
         <div class="md-body" v-html="renderMd(entry.markdown)"></div>
         <div v-if="entry.images && entry.images.length" class="img-grid">
-          <img v-for="img in entry.images" :key="img" :src="img"/>
+          <img v-for="img in entry.images" :key="img" :src="img" @click="$emit('preview-image', img)"/>
         </div>
       </div>
     </div>
