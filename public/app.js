@@ -429,6 +429,11 @@ const app = createApp({
           rows.push({ type: "单词", title: v.word, sub: v.meaning || "无释义", detailType: "vocab", entry: v });
         }
       }
+      for (const c of state.checkins.filter((item) => item.type === "vocab")) {
+        if (hit(c.title, c.markdown, c.amount, c.unit)) {
+          rows.push({ type: "单词打卡", title: c.title, sub: `${c.amount || 0} ${c.unit || "个"}`, detailType: "checkin", entry: c });
+        }
+      }
       for (const p of state.papers) {
         if (hit(p.title, p.source, ...(p.tags || []))) {
           rows.push({ type: "卷子", title: p.title, sub: `${p.questions.length} 题`, paper: p });
@@ -677,7 +682,10 @@ const app = createApp({
     function progress(owner) {
       const goals = state.goals[owner] || { paperTarget: 30, vocabTarget: 1000 };
       const paperDone = state.examAttempts.filter((a) => a.owner === owner).length;
-      const vocabDone = state.vocab.filter((v) => v.owner === owner && v.status === "mastered").length;
+      const vocabCheckinDone = state.checkins
+        .filter((c) => c.owner === owner && c.type === "vocab")
+        .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+      const vocabDone = vocabCheckinDone || state.vocab.filter((v) => v.owner === owner && v.status === "mastered").length;
       return {
         paper: { done: paperDone, target: goals.paperTarget || 0, percent: goals.paperTarget ? Math.min(100, Math.round((paperDone / goals.paperTarget) * 100)) : 0 },
         vocab: { done: vocabDone, target: goals.vocabTarget || 0, percent: goals.vocabTarget ? Math.min(100, Math.round((vocabDone / goals.vocabTarget) * 100)) : 0 },
@@ -748,6 +756,7 @@ const app = createApp({
         date: initial.date || todayKey(),
         color: initial.color || "yellow",
         amount: initial.amount || 0,
+        duration: initial.duration || initial.minutes || 0,
         unit: initial.unit || "min",
         type: initial.entryType || "study",
       });
@@ -761,9 +770,16 @@ const app = createApp({
       const f = editModal.form;
       try {
         if (editModal.type === "vocab") {
-          await api.addVocab({
-            word: f.word, meaning: f.meaning, status: f.status,
-            markdown: f.markdown, images: f.images,
+          const count = Math.max(0, Number(f.amount) || 0);
+          const minutes = Math.max(0, Number(f.duration) || 0);
+          await api.addCheckin({
+            subject: "english",
+            type: "vocab",
+            title: `单词学习 · ${count || 0} 个`,
+            amount: count,
+            unit: "个",
+            markdown: [`用时：${minutes || 0} 分钟`, f.markdown || ""].filter(Boolean).join("\n\n"),
+            images: f.images,
           });
         } else if (editModal.type === "math") {
           await api.upsertMath({
@@ -1156,7 +1172,7 @@ const app = createApp({
             <input type="number" v-model.number="goalEditor.paperTarget" min="0" />
           </label>
           <label class="field">
-            <span>单词目标（个 · 已掌握）</span>
+            <span>单词目标（个 · 累计学习）</span>
             <input type="number" v-model.number="goalEditor.vocabTarget" min="0" />
           </label>
           <div class="modal-actions">
@@ -1340,7 +1356,12 @@ app.component("UserPane", {
   },
   computed: {
     user() { return this.users[this.username]; },
-    vocabList() { return this.listOf("vocab", this.username); },
+    vocabList() {
+      return this.state.checkins
+        .filter((c) => c.owner === this.username && c.type === "vocab")
+        .slice()
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    },
     paperList() { return this.state.papers; },
     attemptList() { return this.state.examAttempts.filter((a) => a.owner === this.username); },
     wrongList() { return this.listOf("wrongQuestions", this.username); },
@@ -1433,18 +1454,18 @@ app.component("UserPane", {
         <!-- 单词 -->
         <div v-if="tab === 'vocab'" class="mod">
           <div class="mod-head">
-            <h3>📚 单词</h3>
-            <button v-if="isMe" class="btn small primary" @click="onEdit('vocab')">+ 添加</button>
+            <h3>📚 单词打卡</h3>
+            <button v-if="isMe" class="btn small primary" @click="onEdit('vocab')">+ 记录</button>
           </div>
-          <div v-if="!vocabList.length" class="empty">还没有单词记录</div>
+          <div v-if="!vocabList.length" class="empty">还没有单词学习打卡</div>
           <ul class="card-list">
-            <li v-for="v in vocabList" :key="v.id" class="card" @click="onDetail('vocab', v)">
-              <div class="card-title">{{ v.word }}</div>
-              <div class="card-sub">{{ v.meaning }}</div>
+            <li v-for="v in vocabList" :key="v.id" class="card" @click="onDetail('checkin', v)">
+              <div class="card-title">{{ v.title }}</div>
+              <div class="card-sub">{{ v.markdown.slice(0, 80) }}</div>
               <div class="card-foot">
-                <span class="badge" :class="'badge-' + v.status">{{ v.status }}</span>
-                <span class="muted">复习 {{ v.reviews }} 次</span>
-                <button v-if="isMe" class="link danger" @click.stop="onDel('vocab', v.id)">删</button>
+                <span class="badge">{{ v.amount || 0 }} {{ v.unit || '个' }}</span>
+                <span class="muted">{{ fmtTime(v.createdAt) }}</span>
+                <button v-if="isMe" class="link danger" @click.stop="onDel('checkin', v.id)">删</button>
               </div>
             </li>
           </ul>
@@ -1764,18 +1785,11 @@ app.component("EditForm", {
   },
   template: `
     <div class="edit">
-      <h3>{{ type === 'vocab' ? '📚 添加单词' : type === 'math' ? '🧮 数学题' : type === 'wrong' ? '❌ 错题' : type === 'note' ? '🗒 便利贴' : type === 'summary' ? '🌙 每日总结' : '✍️ 打卡' }}</h3>
+      <h3>{{ type === 'vocab' ? '📚 单词学习打卡' : type === 'math' ? '🧮 数学题' : type === 'wrong' ? '❌ 错题' : type === 'note' ? '🗒 便利贴' : type === 'summary' ? '🌙 每日总结' : '✍️ 打卡' }}</h3>
 
       <div v-if="type === 'vocab'" class="ef-fields">
-        <label class="field"><span>单词</span><input v-model="form.word" placeholder="meticulous"/></label>
-        <label class="field"><span>释义</span><input v-model="form.meaning" placeholder="非常仔细的"/></label>
-        <label class="field"><span>状态</span>
-          <select v-model="form.status">
-            <option value="learning">学习中</option>
-            <option value="mastered">已掌握</option>
-            <option value="again">再背</option>
-          </select>
-        </label>
+        <label class="field"><span>时间（分钟）</span><input type="number" min="0" v-model.number="form.duration" placeholder="30"/></label>
+        <label class="field"><span>学了多少（个）</span><input type="number" min="0" v-model.number="form.amount" placeholder="50"/></label>
       </div>
 
       <div v-else-if="type === 'math'" class="ef-fields">
@@ -1855,7 +1869,7 @@ app.component("EditForm", {
 
       <div class="ef-md">
         <div class="ef-md-head">
-          <span>📝 {{ type === 'wrong' ? '笔记' : '内容' }} (Markdown · 支持 - [ ] 任务列表)</span>
+          <span>📝 {{ type === 'vocab' ? '自己的想法' : type === 'wrong' ? '笔记' : '内容' }} (Markdown · 支持 - [ ] 任务列表)</span>
           <button class="link" @click="preview = !preview">{{ preview ? '编辑' : '预览' }}</button>
         </div>
         <textarea v-if="!preview" v-model="form.markdown" @paste="handlePaste" rows="8" placeholder="可以粘贴图片 (Ctrl+V) · 拖拽图片到下方区域"/>
@@ -1903,6 +1917,15 @@ app.component("EnglishHub", {
   },
   computed: {
     myVocab() { return this.state.vocab.filter((v) => v.owner === this.me); },
+    myVocabLogs() {
+      return this.state.checkins
+        .filter((c) => c.owner === this.me && c.type === "vocab")
+        .slice()
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    },
+    vocabLogTotal() {
+      return this.myVocabLogs.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    },
     filteredVocab() {
       return this.myVocab.filter((v) => {
         if (this.filterStatus && v.status !== this.filterStatus) return false;
@@ -1990,7 +2013,7 @@ app.component("EnglishHub", {
           <button class="modal-close" @click="onClose">×</button>
         </div>
         <nav class="hub-tabs">
-          <button :class="{ active: tab === 'vocab' }" @click="onTab('vocab')">📖 单词本 ({{ myVocab.length }})</button>
+          <button :class="{ active: tab === 'vocab' }" @click="onTab('vocab')">📖 单词打卡 ({{ myVocabLogs.length }})</button>
           <button :class="{ active: tab === 'flashcards' }" @click="onTab('flashcards')">🎴 闪卡复习 ({{ todayDue.length }})</button>
           <button :class="{ active: tab === 'papers' }" @click="onTab('papers')">📝 卷子 ({{ state.papers.length }})</button>
           <button :class="{ active: tab === 'wrong' }" @click="onTab('wrong')">❌ 错题 ({{ myWrong.length }})</button>
@@ -1998,28 +2021,22 @@ app.component("EnglishHub", {
         </nav>
 
         <div class="hub-body">
-          <!-- 单词本 -->
+          <!-- 单词打卡 -->
           <div v-if="tab === 'vocab'" class="hub-vocab">
             <div class="hub-toolbar">
-              <span class="muted">学习中 {{ vocabStatusCount.learning || 0 }} · 已掌握 {{ vocabStatusCount.mastered || 0 }} · 再背 {{ vocabStatusCount.again || 0 }}</span>
-              <select v-model="filterStatus">
-                <option value="">全部状态</option>
-                <option value="learning">学习中</option>
-                <option value="mastered">已掌握</option>
-                <option value="again">再背</option>
-              </select>
-              <button class="btn small primary" @click="onEdit('vocab')">+ 添加单词</button>
+              <span class="muted">累计学习 {{ vocabLogTotal }} 个 · 打卡 {{ myVocabLogs.length }} 次</span>
+              <button class="btn small primary" @click="onEdit('vocab')">+ 记录单词学习</button>
             </div>
-            <div v-if="!filteredVocab.length" class="empty">没有匹配的单词</div>
+            <div v-if="!myVocabLogs.length" class="empty">还没有单词学习打卡</div>
             <div class="vocab-grid">
-              <div v-for="v in filteredVocab" :key="v.id" class="vocab-card" @click="onDetail('vocab', v)">
+              <div v-for="v in myVocabLogs" :key="v.id" class="vocab-card" @click="onDetail('checkin', v)">
                 <div class="vc-head">
-                  <span class="vc-word">{{ v.word }}</span>
-                  <span class="badge" :class="'badge-' + v.status">{{ v.status }}</span>
+                  <span class="vc-word">{{ v.title }}</span>
+                  <span class="badge">{{ v.amount || 0 }} 个</span>
                 </div>
-                <div class="vc-meaning">{{ v.meaning || '(无释义)' }}</div>
+                <div class="vc-meaning">{{ v.markdown.slice(0, 90) || '(没有想法记录)' }}</div>
                 <div class="vc-foot">
-                  <span class="muted">阶段 {{ v.stage || 0 }} · 复习 {{ v.reviews || 0 }} 次</span>
+                  <span class="muted">{{ fmtTime(v.createdAt) }}</span>
                 </div>
               </div>
             </div>
@@ -2139,8 +2156,8 @@ app.component("EnglishHub", {
             <p class="muted">完整图表（热力图 / 折线 / 饼图）由 codex_continue.md 中的任务实现。当前显示文字汇总：</p>
             <div class="stats-grid">
               <div class="stat-box">
-                <div class="stat-num">{{ myVocab.length }}</div>
-                <div class="stat-label">单词总数</div>
+                <div class="stat-num">{{ vocabLogTotal }}</div>
+                <div class="stat-label">累计学词</div>
               </div>
               <div class="stat-box">
                 <div class="stat-num">{{ vocabStatusCount.mastered || 0 }}</div>
@@ -2524,7 +2541,9 @@ app.component("StatsView", {
       for (const u of this.allUsernames) {
         out[u] = {
           checkins: this.state.checkins.filter((c) => c.owner === u).length,
-          vocab: this.state.vocab.filter((v) => v.owner === u).length,
+          vocab: this.state.checkins
+            .filter((c) => c.owner === u && c.type === "vocab")
+            .reduce((sum, c) => sum + (Number(c.amount) || 0), 0),
           mastered: this.state.vocab.filter((v) => v.owner === u && v.status === "mastered").length,
           attempts: this.state.examAttempts.filter((a) => a.owner === u).length,
           math: this.state.math.filter((m) => m.owner === u).length,
@@ -2585,7 +2604,7 @@ app.component("StatsView", {
         <thead><tr><th>指标</th><th v-for="u in allUsernames" :key="u" :style="{ color: users[u].color }">{{ users[u].displayName }}</th></tr></thead>
         <tbody>
           <tr><td>总打卡数</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].checkins }}</td></tr>
-          <tr><td>单词总数</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].vocab }}</td></tr>
+          <tr><td>累计学词</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].vocab }}</td></tr>
           <tr><td>已掌握</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].mastered }}</td></tr>
           <tr><td>卷子答题次数</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].attempts }}</td></tr>
           <tr><td>数学题</td><td v-for="u in allUsernames" :key="u">{{ summaryByUser[u].math }}</td></tr>

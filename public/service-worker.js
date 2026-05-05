@@ -1,4 +1,4 @@
-const CACHE_NAME = "promise-static-v3";
+const CACHE_NAME = "promise-static-v4";
 const STATIC_ASSETS = ["/", "/app.js", "/styles.css", "/icon.svg", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
