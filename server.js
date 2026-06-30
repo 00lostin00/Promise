@@ -23,7 +23,9 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
+const SESSION_PATH = path.join(DATA_DIR, "sessions.json");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const VALID_USERS = {
   qsky: { displayName: "Qsky", color: "#a8b5a0", side: "left" },
@@ -139,16 +141,69 @@ function id(prefix) {
   return `${prefix}_${crypto.randomBytes(6).toString("hex")}`;
 }
 
+function loadSessionsFromDisk() {
+  ensureStore();
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSION_PATH, "utf8"));
+    const entries = raw.sessions && typeof raw.sessions === "object" ? raw.sessions : {};
+    sessions.clear();
+    for (const [sid, sess] of Object.entries(entries)) {
+      if (!sid || !sess || !VALID_USERS[sess.username]) continue;
+      if (Date.now() - Number(sess.createdAt || 0) > SESSION_TTL_MS) continue;
+      sessions.set(sid, {
+        username: sess.username,
+        createdAt: Number(sess.createdAt || Date.now()),
+      });
+    }
+  } catch {
+    sessions.clear();
+  }
+}
+
+function saveSessionsToDisk() {
+  ensureStore();
+  const data = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sessions: Object.fromEntries(sessions.entries()),
+  };
+  fs.writeFileSync(SESSION_PATH, JSON.stringify(data, null, 2));
+}
+
+function cleanupSessions() {
+  let changed = false;
+  const now = Date.now();
+  for (const [sid, sess] of sessions.entries()) {
+    if (now - Number(sess.createdAt || 0) > SESSION_TTL_MS) {
+      sessions.delete(sid);
+      changed = true;
+    }
+  }
+  if (changed) saveSessionsToDisk();
+}
+
 function newSession(username) {
+  loadSessionsFromDisk();
+  cleanupSessions();
   const sid = crypto.randomBytes(24).toString("hex");
   sessions.set(sid, { username, createdAt: Date.now() });
+  saveSessionsToDisk();
   return sid;
 }
 
 function authUser(req) {
   const sid = req.headers["x-session"] || "";
-  const sess = sessions.get(String(sid));
+  let sess = sessions.get(String(sid));
+  if (!sess) {
+    loadSessionsFromDisk();
+    sess = sessions.get(String(sid));
+  }
   if (!sess) return null;
+  if (Date.now() - Number(sess.createdAt || 0) > SESSION_TTL_MS) {
+    sessions.delete(String(sid));
+    saveSessionsToDisk();
+    return null;
+  }
   return sess.username;
 }
 
@@ -332,7 +387,9 @@ async function handleAuth(req, res, pathname) {
 
   if (pathname === "/api/logout") {
     const sid = req.headers["x-session"] || "";
+    loadSessionsFromDisk();
     sessions.delete(String(sid));
+    saveSessionsToDisk();
     return sendJson(res, 200, { ok: true });
   }
 
